@@ -1,4 +1,4 @@
-module github.com/jsherick/chuckpi
+module github.com/josherick/chuckpi
 
 go 1.25.0
 

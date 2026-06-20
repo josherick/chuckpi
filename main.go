@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,12 +16,17 @@ import (
 )
 
 const (
-	baseURL      = "https://llm.sherick.me"
-	wakeTimeout  = 5 * time.Minute
-	pollInterval = 10 * time.Second
+	defaultBaseURL = "https://llm.sherick.me"
+	wakeTimeout     = 5 * time.Minute
+	pollInterval    = 10 * time.Second
 )
 
+var baseURL = defaultBaseURL
+
 func main() {
+	flag.StringVar(&baseURL, "base-url", defaultBaseURL, "base URL for the LLM API")
+	flag.Parse()
+
 	key := os.Getenv("LLM_API_KEY")
 	if key == "" {
 		fmt.Fprintln(os.Stderr, "error: LLM_API_KEY not set")

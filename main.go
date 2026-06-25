@@ -16,8 +16,8 @@ import (
 
 const (
 	defaultBaseURL = "https://llm.sherick.me"
-	wakeTimeout     = 5 * time.Minute
-	pollInterval    = 10 * time.Second
+	wakeTimeout    = 5 * time.Minute
+	pollInterval   = 10 * time.Second
 )
 
 var (
@@ -50,65 +50,77 @@ func main() {
 		remaining = append(remaining, arg)
 	}
 
-	key := os.Getenv("LLM_API_KEY")
-	if key == "" {
-		fmt.Fprintln(os.Stderr, "error: LLM_API_KEY not set")
-		os.Exit(1)
+	// If --help is passed, skip wake/model selection and just run pi
+	skipSetup := false
+	for _, arg := range remaining {
+		if arg == "--help" || arg == "-help" {
+			skipSetup = true
+			break
+		}
 	}
 
-	if !checkHealth(key) {
-		fmt.Println("chuck is offline — sending wake packet...")
-		if err := sendWake(key); err != nil {
-			fmt.Fprintf(os.Stderr, "wake request failed: %v\n", err)
+	if !skipSetup {
+		key := os.Getenv("LLM_API_KEY")
+		if key == "" {
+			fmt.Fprintln(os.Stderr, "error: LLM_API_KEY not set")
+			os.Exit(1)
 		}
 
-		ready := spinUntil("Waiting for chuck to boot...", wakeTimeout, func() bool {
-			return checkHealth(key)
-		})
-		if !ready {
-			fmt.Fprintln(os.Stderr, "timed out waiting for chuck — is it plugged in?")
+		if !checkHealth(key) {
+			fmt.Println("chuck is offline — sending wake packet...")
+			if err := sendWake(key); err != nil {
+				fmt.Fprintf(os.Stderr, "wake request failed: %v\n", err)
+			}
+
+			ready := spinUntil("Waiting for chuck to boot...", wakeTimeout, func() bool {
+				return checkHealth(key)
+			})
+			if !ready {
+				fmt.Fprintln(os.Stderr, "timed out waiting for chuck — is it plugged in?")
+				os.Exit(1)
+			}
+		}
+
+		models, err := listModels(key)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to list models:", err)
+			os.Exit(1)
+		}
+		if len(models) == 0 {
+			fmt.Fprintln(os.Stderr, "no models found")
+			os.Exit(1)
+		}
+
+		// Use model.ID for display (comparable), store full modelDetails
+		selected := modelID
+		if selected == "" {
+			if len(models) == 1 {
+				selected = models[0].ID
+			} else {
+				opts := make([]huh.Option[string], len(models))
+				for i, m := range models {
+					opts[i] = huh.NewOption(m.ID, m.ID)
+				}
+				if err := huh.NewSelect[string]().
+					Title("Select a model").
+					Options(opts...).
+					Value(&selected).
+					Run(); err != nil {
+					fmt.Fprintln(os.Stderr, "selection cancelled")
+					os.Exit(1)
+				}
+			}
+		}
+
+		// Get the full model details for the selected ID
+		selectedModel := modelsByID(selected)
+		if err := configurePi(selectedModel, key); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to configure pi:", err)
 			os.Exit(1)
 		}
 	}
 
-	models, err := listModels(key)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "failed to list models:", err)
-		os.Exit(1)
-	}
-	if len(models) == 0 {
-		fmt.Fprintln(os.Stderr, "no models found")
-		os.Exit(1)
-	}
-
-	// Use model.ID for display (comparable), store full modelDetails
-	selected := modelID
-	if selected == "" {
-		if len(models) == 1 {
-			selected = models[0].ID
-		} else {
-			opts := make([]huh.Option[string], len(models))
-			for i, m := range models {
-				opts[i] = huh.NewOption(m.ID, m.ID)
-			}
-			if err := huh.NewSelect[string]().
-				Title("Select a model").
-				Options(opts...).
-				Value(&selected).
-				Run(); err != nil {
-				fmt.Fprintln(os.Stderr, "selection cancelled")
-				os.Exit(1)
-			}
-		}
-	}
-
-	// Get the full model details for the selected ID
-	selectedModel := modelsByID(selected)
-	if err := configurePi(selectedModel, key); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to configure pi:", err)
-		os.Exit(1)
-	}
-
+	// Exec pi (runs for both skipSetup and normal paths)
 	pi, err := exec.LookPath("pi")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pi not found in PATH")
@@ -182,11 +194,11 @@ func sendWake(key string) error {
 
 // modelDetails holds the model info with dynamic context window
 type modelDetails struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Input         []string  `json:"input"`
-	ContextWindow int       `json:"contextWindow"`
-	Tags          []string  `json:"tags,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Input         []string `json:"input"`
+	ContextWindow int      `json:"contextWindow"`
+	Tags          []string `json:"tags,omitempty"`
 }
 
 func parseFullModels(data []fullModel) []modelDetails {
@@ -202,7 +214,7 @@ func parseFullModels(data []fullModel) []modelDetails {
 		if len(input) == 0 {
 			input = []string{"text"}
 		}
-		
+
 		models[i] = modelDetails{
 			ID:            m.ID,
 			Name:          m.ID, // use ID as name, or could derive from tags
@@ -224,14 +236,14 @@ func listModels(key string) ([]modelDetails, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	
+
 	var result struct {
 		Data []fullModel `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	
+
 	models := parseFullModels(result.Data)
 	// Cache models for lookup
 	for _, m := range models {
@@ -248,22 +260,22 @@ func modelsByID(id string) modelDetails {
 
 // fullModel holds the complete model metadata from the API
 type fullModel struct {
-	ID       string    `json:"id"`
-	Tags     []string  `json:"tags"`
-	Aliases  []string  `json:"aliases"`
+	ID           string   `json:"id"`
+	Tags         []string `json:"tags"`
+	Aliases      []string `json:"aliases"`
 	Architecture struct {
-		InputModalities   []string `json:"input_modalities"`
-		OutputModalities  []string `json:"output_modalities"`
+		InputModalities  []string `json:"input_modalities"`
+		OutputModalities []string `json:"output_modalities"`
 	} `json:"architecture"`
 	Meta struct {
-		NCTX    int `json:"n_ctx"`
-		NParam  int `json:"n_params"`
-		Size    int `json:"size"`
+		NCTX      int `json:"n_ctx"`
+		NParam    int `json:"n_params"`
+		Size      int `json:"size"`
 		VocabType int `json:"vocab_type"`
-		NVocab   int `json:"n_vocab"`
+		NVocab    int `json:"n_vocab"`
 	} `json:"meta,omitempty"`
 	Status struct {
-		Value string `json:"value"`
+		Value string   `json:"value"`
 		Args  []string `json:"args"`
 	} `json:"status"`
 }
@@ -302,14 +314,14 @@ func configurePi(modelDetails modelDetails, key string) error {
 	if cfg.Providers == nil {
 		cfg.Providers = make(map[string]provider)
 	}
-	
+
 	// Build model name with optional tags
 	modelName := "chuck / " + modelDetails.ID
 	if len(modelDetails.Tags) > 0 {
 		tags := strings.Join(modelDetails.Tags, ", ")
 		modelName = modelName + " [" + tags + "]"
 	}
-	
+
 	cfg.Providers["chuck"] = provider{
 		BaseURL:    baseURL + "/v1",
 		API:        "openai-completions",
@@ -362,12 +374,12 @@ type modelsConfig struct {
 }
 
 type provider struct {
-	BaseURL    string   `json:"baseUrl"`
-	API        string   `json:"api"`
-	APIKey     string   `json:"apiKey"`
-	AuthHeader bool     `json:"authHeader"`
-	Compat     compat   `json:"compat"`
-	Models     []model  `json:"models"`
+	BaseURL    string  `json:"baseUrl"`
+	API        string  `json:"api"`
+	APIKey     string  `json:"apiKey"`
+	AuthHeader bool    `json:"authHeader"`
+	Compat     compat  `json:"compat"`
+	Models     []model `json:"models"`
 }
 
 type compat struct {

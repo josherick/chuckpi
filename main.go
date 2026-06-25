@@ -89,7 +89,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pi not found in PATH")
 		os.Exit(1)
 	}
-	if err := syscall.Exec(pi, []string{"pi"}, os.Environ()); err != nil {
+	args := append([]string{"pi"}, flag.Args()...)
+	if err := syscall.Exec(pi, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to exec pi:", err)
 		os.Exit(1)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,8 +25,10 @@ const (
 var baseURL = defaultBaseURL
 
 func main() {
-	flag.StringVar(&baseURL, "base-url", defaultBaseURL, "base URL for the LLM API")
-	flag.Parse()
+	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	fs.StringVar(&baseURL, "base-url", defaultBaseURL, "base URL for the LLM API")
+	fs.SetOutput(io.Discard)
+	fs.Parse(os.Args[1:])
 
 	key := os.Getenv("LLM_API_KEY")
 	if key == "" {
@@ -89,7 +92,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pi not found in PATH")
 		os.Exit(1)
 	}
-	args := append([]string{"pi"}, flag.Args()...)
+	args := append([]string{"pi"}, fs.Args()...)
 	if err := syscall.Exec(pi, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to exec pi:", err)
 		os.Exit(1)

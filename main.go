@@ -2,9 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,11 +26,29 @@ var (
 )
 
 func main() {
-	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	fs.StringVar(&baseURL, "base-url", defaultBaseURL, "base URL for the LLM API")
-	fs.StringVar(&modelID, "model", "", "model ID to use (skips model selection)")
-	fs.SetOutput(io.Discard)
-	fs.Parse(os.Args[1:])
+	// Manually extract known flags, pass everything else through to pi unchanged
+	// (Go's flag.Parse swallows unknown short flags like -p)
+	var remaining []string
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		if strings.HasPrefix(arg, "-") {
+			if arg == "-base-url" || arg == "--base-url" {
+				if i+1 < len(os.Args) {
+					baseURL = os.Args[i+1]
+					i++
+				}
+				continue
+			}
+			if arg == "-model" || arg == "--model" {
+				if i+1 < len(os.Args) {
+					modelID = os.Args[i+1]
+					i++
+				}
+				continue
+			}
+		}
+		remaining = append(remaining, arg)
+	}
 
 	key := os.Getenv("LLM_API_KEY")
 	if key == "" {
@@ -98,19 +114,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pi not found in PATH")
 		os.Exit(1)
 	}
-	// Filter out --model and its value from args passed to pi
-	// (configurePi already sets it as the default)
-	args := []string{"pi"}
-	for i, arg := range fs.Args() {
-		if arg == "--model" || arg == "-model" {
-			// skip this arg and the next one (the model value)
-			if i+1 < len(fs.Args()) {
-				i++
-			}
-			continue
-		}
-		args = append(args, arg)
-	}
+	args := append([]string{"pi"}, remaining...)
 	if err := syscall.Exec(pi, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to exec pi:", err)
 		os.Exit(1)

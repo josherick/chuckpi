@@ -22,11 +22,15 @@ const (
 	pollInterval    = 10 * time.Second
 )
 
-var baseURL = defaultBaseURL
+var (
+	baseURL = defaultBaseURL
+	modelID string
+)
 
 func main() {
 	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	fs.StringVar(&baseURL, "base-url", defaultBaseURL, "base URL for the LLM API")
+	fs.StringVar(&modelID, "model", "", "model ID to use (skips model selection)")
 	fs.SetOutput(io.Discard)
 	fs.Parse(os.Args[1:])
 
@@ -62,21 +66,23 @@ func main() {
 	}
 
 	// Use model.ID for display (comparable), store full modelDetails
-	var selected string
-	if len(models) == 1 {
-		selected = models[0].ID
-	} else {
-		opts := make([]huh.Option[string], len(models))
-		for i, m := range models {
-			opts[i] = huh.NewOption(m.ID, m.ID)
-		}
-		if err := huh.NewSelect[string]().
-			Title("Select a model").
-			Options(opts...).
-			Value(&selected).
-			Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "selection cancelled")
-			os.Exit(1)
+	selected := modelID
+	if selected == "" {
+		if len(models) == 1 {
+			selected = models[0].ID
+		} else {
+			opts := make([]huh.Option[string], len(models))
+			for i, m := range models {
+				opts[i] = huh.NewOption(m.ID, m.ID)
+			}
+			if err := huh.NewSelect[string]().
+				Title("Select a model").
+				Options(opts...).
+				Value(&selected).
+				Run(); err != nil {
+				fmt.Fprintln(os.Stderr, "selection cancelled")
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -92,7 +98,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pi not found in PATH")
 		os.Exit(1)
 	}
-	args := append([]string{"pi"}, fs.Args()...)
+	// Filter out --model and its value from args passed to pi
+	// (configurePi already sets it as the default)
+	args := []string{"pi"}
+	for i, arg := range fs.Args() {
+		if arg == "--model" || arg == "-model" {
+			// skip this arg and the next one (the model value)
+			if i+1 < len(fs.Args()) {
+				i++
+			}
+			continue
+		}
+		args = append(args, arg)
+	}
 	if err := syscall.Exec(pi, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to exec pi:", err)
 		os.Exit(1)
